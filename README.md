@@ -1,10 +1,55 @@
-# Data Platform Terraform Project
+## Convención de nombres
 
-## Descripción
+Para mantener consistencia entre ambientes y facilitar la identificación de recursos, se utilizará la siguiente estructura:
 
-Este repositorio contiene la estructura inicial de un proyecto Terraform para una futura plataforma de procesamiento de datos basada en AWS, incluyendo servicios como Kinesis y Apache Flink.
+```text
+<project_name>-<environment>-<resource>
+```
 
-## Inicialización
+Donde:
 
-```bash
-terraform init
+- `project_name`: nombre del proyecto.
+- `environment`: entorno (dev, qa, prod).
+- `resource`: tipo de recurso AWS.
+
+### Ejemplos
+
+Kinesis Stream:
+
+```text
+data-platform-dev-kinesis
+data-platform-qa-kinesis
+data-platform-prod-kinesis
+```
+
+Aplicaciones Apache Flink:
+
+```text
+data-platform-dev-flink
+data-platform-qa-flink
+data-platform-prod-flink
+```
+
+Buckets S3:
+
+```text
+data-platform-dev-raw
+data-platform-dev-processed
+
+data-platform-prod-raw
+data-platform-prod-processed
+```
+
+IAM Roles:
+
+```text
+data-platform-dev-role
+data-platform-prod-role
+```
+
+### Beneficios
+
+- Permite identificar rápidamente el proyecto al que pertenece un recurso.
+- Facilita distinguir ambientes de desarrollo, pruebas y producción.
+- Mantiene una nomenclatura consistente en toda la infraestructura.
+- Simplifica tareas de monitoreo, auditoría y mantenimiento.
