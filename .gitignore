@@ -1,5 +1,18 @@
-.terraform/
+# Terraform local state y plugins
+**/.terraform/*
 *.tfstate
-*.tfstate.backup
-.terraform.lock.hcl
+*.tfstate.*
+*.tfplan
+tfplan
 *.tfvars
+!*.tfvars.example
+
+# Archivos de bloqueo y logs
+# El lockfile .terraform.lock.hcl se versiona para fijar proveedores.
+*.log
+crash.log
+
+# Configuración de editores
+.vscode/
+.idea/
+.DS_Store

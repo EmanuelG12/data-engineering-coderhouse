@@ -1,7 +1,9 @@
 # --- 1. Storage del Data Lake (Landing / Raw) ---
+data "aws_caller_identity" "current" {}
+
 resource "aws_s3_bucket" "data_lake" {
-  bucket        = "datalake-raw-${var.environment}-coder-data"
-  force_destroy = true
+  bucket        = "datalake-${data.aws_caller_identity.current.account_id}-${var.environment}-coder-data"
+  force_destroy = false
 
   tags = {
     Name        = "datalake-raw-${var.environment}"
@@ -9,7 +11,24 @@ resource "aws_s3_bucket" "data_lake" {
   }
 }
 
-# Bloqueo total de acceso público al bucket
+resource "aws_s3_bucket_versioning" "data_lake" {
+  bucket = aws_s3_bucket.data_lake.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "data_lake" {
+  bucket = aws_s3_bucket.data_lake.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "security" {
   bucket                  = aws_s3_bucket.data_lake.id
   block_public_acls       = true
@@ -35,4 +54,5 @@ module "identity" {
 
   environment          = var.environment
   data_lake_bucket_arn = aws_s3_bucket.data_lake.arn
+  data_lake_prefix     = "raw/"
 }

@@ -18,7 +18,12 @@ output "data_lake_bucket_arn" {
   value       = aws_s3_bucket.data_lake.arn
 }
 
-output "firehose_role_arn" {
-  description = "ARN del rol IAM para Kinesis Firehose"
-  value       = module.identity.firehose_role_arn
+output "data_processing_role_arn" {
+  description = "ARN del rol IAM de ejecución para Lambda o Flink"
+  value       = module.identity.data_processing_role_arn
+}
+
+output "control_plane_audit_role_arn" {
+  description = "ARN del rol de solo lectura para auditoría"
+  value       = module.identity.control_plane_audit_role_arn
 }
