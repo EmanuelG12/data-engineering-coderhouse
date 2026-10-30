@@ -1,9 +1,8 @@
-﻿
-Terraform used the selected providers to generate the following execution
-plan. Resource actions are indicated with the following symbols:
+Nota de privacidad: los valores del ID de cuenta se reemplazaron por `[AWS_ACCOUNT_ID_REDACTED]`. Este archivo conserva la salida de un plan (23 recursos propuestos); el plan no se aplicó y no demuestra una entrega real de objetos a S3.
+
+Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
   + create
  <= read (data resources)
- Nota: se redactó el ID de cuenta AWS para publicar esta evidencia. El resumen del plan no fue modificado.
 
 Terraform will perform the following actions:
 
@@ -128,7 +127,7 @@ Terraform will perform the following actions:
   + resource "aws_iam_policy" "control_plane_audit_read_only" {
       + arn              = (known after apply)
       + attachment_count = (known after apply)
-      + description      = "Acciones expl├¡citas de lectura para auditor├¡a de infraestructura"
+      + description      = "Acciones explícitas de lectura para auditoría de infraestructura"
       + id               = (known after apply)
       + name             = "control-plane-audit-read-only-dev"
       + name_prefix      = (known after apply)
@@ -273,6 +272,259 @@ Terraform will perform the following actions:
       + id         = (known after apply)
       + policy_arn = (known after apply)
       + role       = "data-processing-execution-role-dev"
+    }
+
+  # module.kinesis.data.aws_iam_policy_document.firehose_permissions will be read during apply
+  # (config refers to values not yet known)
+ <= data "aws_iam_policy_document" "firehose_permissions" {
+      + id            = (known after apply)
+      + json          = (known after apply)
+      + minified_json = (known after apply)
+
+      + statement {
+          + actions   = [
+              + "kinesis:DescribeStream",
+              + "kinesis:DescribeStreamSummary",
+              + "kinesis:GetRecords",
+              + "kinesis:GetShardIterator",
+              + "kinesis:ListShards",
+            ]
+          + effect    = "Allow"
+          + resources = [
+              + (known after apply),
+            ]
+          + sid       = "ReadKinesisStream"
+        }
+      + statement {
+          + actions   = [
+              + "kms:Decrypt",
+              + "kms:DescribeKey",
+            ]
+          + effect    = "Allow"
+          + resources = [
+              + (known after apply),
+            ]
+          + sid       = "DecryptKinesisRecords"
+        }
+      + statement {
+          + actions   = [
+              + "s3:AbortMultipartUpload",
+              + "s3:GetObject",
+              + "s3:PutObject",
+            ]
+          + effect    = "Allow"
+          + resources = [
+              + (known after apply),
+            ]
+          + sid       = "WriteToDataLakePrefix"
+        }
+      + statement {
+          + actions   = [
+              + "s3:GetBucketLocation",
+            ]
+          + effect    = "Allow"
+          + resources = [
+              + (known after apply),
+            ]
+          + sid       = "GetDataLakeBucketLocation"
+        }
+      + statement {
+          + actions   = [
+              + "s3:ListBucket",
+              + "s3:ListBucketMultipartUploads",
+            ]
+          + effect    = "Allow"
+          + resources = [
+              + (known after apply),
+            ]
+          + sid       = "ListDataLakeBucketPrefix"
+
+          + condition {
+              + test     = "StringLike"
+              + values   = [
+                  + "raw/kinesis/*",
+                ]
+              + variable = "s3:prefix"
+            }
+        }
+      + statement {
+          + actions   = [
+              + "logs:CreateLogStream",
+              + "logs:PutLogEvents",
+            ]
+          + effect    = "Allow"
+          + resources = [
+              + (known after apply),
+            ]
+          + sid       = "WriteDeliveryLogs"
+        }
+    }
+
+  # module.kinesis.data.aws_kms_key.kinesis will be read during apply
+  # (depends on a resource or a module with changes pending)
+ <= data "aws_kms_key" "kinesis" {
+      + arn                             = (known after apply)
+      + aws_account_id                  = (known after apply)
+      + cloud_hsm_cluster_id            = (known after apply)
+      + creation_date                   = (known after apply)
+      + custom_key_store_id             = (known after apply)
+      + customer_master_key_spec        = (known after apply)
+      + deletion_date                   = (known after apply)
+      + description                     = (known after apply)
+      + enabled                         = (known after apply)
+      + expiration_model                = (known after apply)
+      + id                              = (known after apply)
+      + key_id                          = "alias/aws/kinesis"
+      + key_manager                     = (known after apply)
+      + key_spec                        = (known after apply)
+      + key_state                       = (known after apply)
+      + key_usage                       = (known after apply)
+      + multi_region                    = (known after apply)
+      + multi_region_configuration      = (known after apply)
+      + origin                          = (known after apply)
+      + pending_deletion_window_in_days = (known after apply)
+      + valid_to                        = (known after apply)
+      + xks_key_configuration           = (known after apply)
+    }
+
+  # module.kinesis.aws_cloudwatch_log_group.firehose will be created
+  + resource "aws_cloudwatch_log_group" "firehose" {
+      + arn               = (known after apply)
+      + id                = (known after apply)
+      + log_group_class   = (known after apply)
+      + name              = "/aws/kinesisfirehose/data-ingestion-dev"
+      + name_prefix       = (known after apply)
+      + retention_in_days = 1
+      + skip_destroy      = false
+      + tags              = {
+          + "Environment" = "dev"
+          + "ManagedBy"   = "Terraform"
+        }
+      + tags_all          = {
+          + "Environment" = "dev"
+          + "ManagedBy"   = "Terraform"
+        }
+    }
+
+  # module.kinesis.aws_cloudwatch_log_stream.firehose will be created
+  + resource "aws_cloudwatch_log_stream" "firehose" {
+      + arn            = (known after apply)
+      + id             = (known after apply)
+      + log_group_name = "/aws/kinesisfirehose/data-ingestion-dev"
+      + name           = "S3Delivery"
+    }
+
+  # module.kinesis.aws_iam_role.firehose will be created
+  + resource "aws_iam_role" "firehose" {
+      + arn                   = (known after apply)
+      + assume_role_policy    = jsonencode(
+            {
+              + Statement = [
+                  + {
+                      + Action    = "sts:AssumeRole"
+                      + Effect    = "Allow"
+                      + Principal = {
+                          + Service = "firehose.amazonaws.com"
+                        }
+                    },
+                ]
+              + Version   = "2012-10-17"
+            }
+        )
+      + create_date           = (known after apply)
+      + force_detach_policies = false
+      + id                    = (known after apply)
+      + managed_policy_arns   = (known after apply)
+      + max_session_duration  = 3600
+      + name                  = "firehose-delivery-dev"
+      + name_prefix           = (known after apply)
+      + path                  = "/"
+      + tags                  = {
+          + "Environment" = "dev"
+          + "ManagedBy"   = "Terraform"
+          + "Name"        = "firehose-delivery-dev"
+        }
+      + tags_all              = {
+          + "Environment" = "dev"
+          + "ManagedBy"   = "Terraform"
+          + "Name"        = "firehose-delivery-dev"
+        }
+      + unique_id             = (known after apply)
+
+      + inline_policy (known after apply)
+    }
+
+  # module.kinesis.aws_iam_role_policy.firehose will be created
+  + resource "aws_iam_role_policy" "firehose" {
+      + id          = (known after apply)
+      + name        = "firehose-delivery-dev"
+      + name_prefix = (known after apply)
+      + policy      = (known after apply)
+      + role        = (known after apply)
+    }
+
+  # module.kinesis.aws_kinesis_firehose_delivery_stream.s3 will be created
+  + resource "aws_kinesis_firehose_delivery_stream" "s3" {
+      + arn            = (known after apply)
+      + destination    = "extended_s3"
+      + destination_id = (known after apply)
+      + id             = (known after apply)
+      + name           = "data-ingestion-dev-to-s3"
+      + tags           = {
+          + "Environment" = "dev"
+          + "ManagedBy"   = "Terraform"
+        }
+      + tags_all       = {
+          + "Environment" = "dev"
+          + "ManagedBy"   = "Terraform"
+        }
+      + version_id     = (known after apply)
+
+      + extended_s3_configuration {
+          + bucket_arn         = (known after apply)
+          + buffering_interval = 60
+          + buffering_size     = 5
+          + compression_format = "UNCOMPRESSED"
+          + custom_time_zone   = "UTC"
+          + prefix             = "raw/kinesis/"
+          + role_arn           = (known after apply)
+          + s3_backup_mode     = "Disabled"
+
+          + cloudwatch_logging_options {
+              + enabled         = true
+              + log_group_name  = "/aws/kinesisfirehose/data-ingestion-dev"
+              + log_stream_name = "S3Delivery"
+            }
+        }
+
+      + kinesis_source_configuration {
+          + kinesis_stream_arn = (known after apply)
+          + role_arn           = (known after apply)
+        }
+    }
+
+  # module.kinesis.aws_kinesis_stream.ingestion will be created
+  + resource "aws_kinesis_stream" "ingestion" {
+      + arn                       = (known after apply)
+      + encryption_type           = "KMS"
+      + enforce_consumer_deletion = false
+      + id                        = (known after apply)
+      + kms_key_id                = "alias/aws/kinesis"
+      + name                      = "data-ingestion-dev"
+      + retention_period          = 24
+      + shard_count               = 2
+      + tags                      = {
+          + "Environment" = "dev"
+          + "ManagedBy"   = "Terraform"
+          + "Name"        = "data-ingestion-dev"
+        }
+      + tags_all                  = {
+          + "Environment" = "dev"
+          + "ManagedBy"   = "Terraform"
+          + "Name"        = "data-ingestion-dev"
+        }
+
+      + stream_mode_details (known after apply)
     }
 
   # module.network.aws_route_table.private_rt will be created
@@ -424,15 +676,20 @@ Terraform will perform the following actions:
       + subnet_configuration (known after apply)
     }
 
-Plan: 17 to add, 0 to change, 0 to destroy.
+Plan: 23 to add, 0 to change, 0 to destroy.
 
 Changes to Outputs:
-  + control_plane_audit_role_arn = (known after apply)
-  + data_lake_bucket_arn         = (known after apply)
-  + data_processing_role_arn     = (known after apply)
-  + private_subnet_ids           = [
+  + control_plane_audit_role_arn  = (known after apply)
+  + data_lake_bucket_arn          = (known after apply)
+  + data_processing_role_arn      = (known after apply)
+  + firehose_delivery_stream_arn  = (known after apply)
+  + firehose_delivery_stream_name = "data-ingestion-dev-to-s3"
+  + firehose_role_arn             = (known after apply)
+  + kinesis_stream_arn            = (known after apply)
+  + kinesis_stream_name           = "data-ingestion-dev"
+  + private_subnet_ids            = [
       + (known after apply),
       + (known after apply),
     ]
-  + s3_endpoint_id               = (known after apply)
-  + vpc_id                       = (known after apply)
+  + s3_endpoint_id                = (known after apply)
+  + vpc_id                        = (known after apply)

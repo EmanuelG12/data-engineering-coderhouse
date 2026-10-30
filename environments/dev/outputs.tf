@@ -27,3 +27,28 @@ output "control_plane_audit_role_arn" {
   description = "ARN del rol de solo lectura para auditoría"
   value       = module.identity.control_plane_audit_role_arn
 }
+
+output "kinesis_stream_name" {
+  description = "Nombre del Kinesis Data Stream de ingesta"
+  value       = module.kinesis.stream_name
+}
+
+output "kinesis_stream_arn" {
+  description = "ARN del Kinesis Data Stream de ingesta"
+  value       = module.kinesis.stream_arn
+}
+
+output "firehose_delivery_stream_name" {
+  description = "Nombre del delivery stream de Firehose"
+  value       = module.kinesis.firehose_name
+}
+
+output "firehose_delivery_stream_arn" {
+  description = "ARN del delivery stream de Firehose"
+  value       = module.kinesis.firehose_arn
+}
+
+output "firehose_role_arn" {
+  description = "ARN del rol de ejecución de Firehose"
+  value       = module.kinesis.firehose_role_arn
+}

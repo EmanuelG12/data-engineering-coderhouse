@@ -4,6 +4,7 @@
 *.tfstate.*
 *.tfplan
 tfplan
+sse-config.json
 *.tfvars
 !*.tfvars.example
 

@@ -56,3 +56,10 @@ module "identity" {
   data_lake_bucket_arn = aws_s3_bucket.data_lake.arn
   data_lake_prefix     = "raw/"
 }
+
+module "kinesis" {
+  source = "../../modules/kinesis"
+
+  environment          = var.environment
+  data_lake_bucket_arn = aws_s3_bucket.data_lake.arn
+}
