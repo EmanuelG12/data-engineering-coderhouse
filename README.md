@@ -1,6 +1,6 @@
-# Infraestructura base e ingesta Kinesis
+# Plataforma de datos: infraestructura, ingesta y procesamiento
 
-Este repositorio contiene la configuración Terraform para la infraestructura base y la ingesta Kinesis → Firehose → S3. El código está validado localmente. El plan documentado es una propuesta de Terraform: **no significa que los recursos de este checkpoint estén desplegados**. La prueba real de entrega a S3 queda pendiente hasta aplicar el plan en una cuenta AWS autorizada.
+Este repositorio contiene la infraestructura base en Terraform, la ingesta Kinesis → Firehose → S3 y el código incremental para Managed Service for Apache Flink. La base Terraform fue validada previamente; la aplicación Flink de esta entrega no se compiló ni desplegó. El plan documentado es una salida histórica: **no significa que los recursos estén desplegados**.
 
 La configuración define:
 
@@ -20,8 +20,12 @@ modules/
   network/       VPC, subredes, tablas de rutas y endpoint S3
   identity/      Roles y políticas IAM
   kinesis/       Stream cifrado, rol Firehose y entrega a S3
+  flink/         Aplicación Managed Flink, rol IAM, checkpoints y logging
 environments/
   dev/           Configuración del entorno, backend, variables y outputs
+flink/
+  src/           Job Java de Kinesis con Event Time y agregación por ventana
+  pom.xml        Versiones de Flink y conector Kinesis
 ```
 
 ## Prerrequisitos
@@ -243,3 +247,61 @@ kubectl delete namespace urban-streaming
 ```
 
 El PVC y los recursos de almacenamiento asociados también se eliminan según la política de la StorageClass local. Este comando afecta solo a este entorno local; verificá el contexto de `kubectl` antes de ejecutarlo.
+
+## Pre-entrega 4: Managed Service for Apache Flink
+
+Esta parte agrega una aplicación Java para consumir el Kinesis Data Stream creado por el módulo `kinesis`. Flink lee registros JSON con datos urbanos, asigna tiempo de evento, tolera hasta 30 segundos de desorden y calcula promedios de temperatura y calidad del aire por sensor en ventanas tumbling de un minuto.
+
+```mermaid
+flowchart LR
+    P[Productor de sensores] --> K[Kinesis Data Stream]
+    K -->|KinesisStreamsSource| F[Managed Service for Apache Flink]
+    F --> W[Watermark: 30 s<br/>Event Time]
+    W --> A[Ventana tumbling: 1 min<br/>keyBy sensor_id]
+    A --> L[CloudWatch Logs<br/>promedios por sensor]
+```
+
+### Estado, checkpointing y límites de la práctica
+
+- La aplicación usa paralelismo `1` y `1` unidad de paralelismo por KPU como configuración inicial. El paralelismo se puede ajustar desde las variables del módulo cuando cambien los shards o el volumen.
+- El operador de ventana mantiene estado keyed por `sensor_id`. Terraform habilita checkpoints administrados por Managed Flink cada 60 segundos, con una pausa mínima de 5 segundos.
+- En un primer inicio, la fuente usa la posición `LATEST` predeterminada del conector Kinesis: el productor debe enviar eventos después de iniciar el job. Al reiniciarse desde un checkpoint, Flink restaura el progreso y el estado.
+- **Managed Flink administra el almacenamiento de sus checkpoints.** El bloque `checkpoint_configuration` configura su persistencia y frecuencia; no recibe una ruta a un bucket S3 del usuario. El bucket del Data Lake se usa aquí para publicar el JAR, no como una ruta manual de checkpoints. Consultá la [documentación oficial de checkpoints](https://docs.aws.amazon.com/managed-flink/latest/java/how-fault.html).
+- Los resultados agregados se escriben en la salida de consola del job y se envían a CloudWatch Logs. El grupo de logs de esta aplicación conserva eventos durante 7 días.
+- La aplicación no se conecta a la VPC aislada de Terraform. Usa Kinesis en la misma región mediante la conectividad administrada del servicio; adjuntarla a las subredes privadas actuales requeriría diseñar rutas/endpoints para Kinesis y CloudWatch.
+- El rol de Flink es independiente del rol genérico de procesamiento: solo puede leer el stream y su clave KMS, obtener el artefacto JAR y publicar logs en el grupo de CloudWatch configurado.
+- La aplicación procesa registros con `sensor_id`, `temperature`, `humidity`, `air_quality_index` y `timestamp` ISO-8601. Mensajes con otro formato hacen fallar el procesamiento y quedan visibles en los logs; validá el formato de los productores antes de iniciar el job.
+- Un evento válido de ejemplo es `{"sensor_id":"sensor-001","temperature":21.5,"humidity":48.0,"air_quality_index":35,"timestamp":"2026-10-31T14:00:00Z"}`. El evento genérico usado en la prueba anterior de Kinesis no cumple este esquema.
+- **No apliques Terraform sin revisar los costos.** Managed Flink cobra por las KPU mientras la aplicación está ejecutándose; Kinesis, Firehose, S3, KMS y CloudWatch también pueden generar cargos.
+
+### Código y empaquetado
+
+El proyecto Java está en `flink/`. Usa Java 11, Flink 1.19 y el conector Kinesis `5.0.0-1.19`, alineados con el runtime `FLINK-1_19` soportado por el provider AWS fijado en este repositorio. Para empaquetar el JAR sombreado desde la raíz:
+
+```powershell
+mvn -f .\flink\pom.xml clean package
+```
+
+El resultado es `flink/target/urban-sensors-flink.jar`. Está ignorado por Git porque Terraform lo carga desde el equipo local al bucket S3. Compilá el JAR antes de ejecutar Terraform; no se versiona un artefacto binario ni se sube desde este repositorio automáticamente.
+
+### Infraestructura y publicación
+
+El módulo `modules/flink/` crea el rol IAM dedicado, el grupo/stream de CloudWatch, publica el JAR cifrado en el bucket Data Lake y define la aplicación `aws_kinesisanalyticsv2_application`. `environments/dev/main.tf` conecta el módulo con el ARN y la clave KMS del stream existente. La aplicación queda creada, pero **Terraform no la inicia automáticamente**.
+
+Después de configurar AWS SSO y confirmar la identidad de la cuenta autorizada, el flujo de infraestructura es:
+
+```powershell
+$env:AWS_PROFILE = "dev"
+aws sso login --profile dev
+aws sts get-caller-identity --profile dev
+mvn -f .\flink\pom.xml clean package
+terraform -chdir=environments/dev plan
+```
+
+Revisá el plan completo. Incluirá recursos de Flink y cualquier infraestructura que no exista en el estado remoto. No ejecutes `apply` sin autorización, revisión de costos y confirmación de que el stream fuente está `ACTIVE`. Cuando se apruebe el despliegue, Terraform publica el JAR y crea la aplicación; luego debe iniciarse desde la consola de AWS. La aplicación no se ha desplegado ni iniciado desde este repositorio.
+
+### Verificación y evidencia
+
+La aplicación registra los resultados al cerrar cada ventana. Después de iniciar el job, consultá el grupo de CloudWatch devuelto por `terraform output flink_cloudwatch_log_group_name` y verificá líneas JSON con `sensor_id`, `window_start`, `window_end`, `event_count`, `avg_temperature` y `avg_air_quality_index`. En la consola de Managed Flink, verificá también el grafo del job y las métricas de checkpoints.
+
+La entrega todavía no tiene evidencia de una ejecución real: Docker/Kubernetes no intervienen en esta aplicación y tampoco se aplicó Terraform ni se inició Flink en AWS. Agregá capturas o logs reales después de una ejecución autorizada; no uses una salida simulada como evidencia.

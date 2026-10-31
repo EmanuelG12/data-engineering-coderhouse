@@ -27,3 +27,9 @@ variable "availability_zones" {
   description = "Availability Zones"
   default     = ["us-east-2a", "us-east-2b"]
 }
+
+variable "flink_application_jar_path" {
+  type        = string
+  description = "Ruta al JAR sombreado de Flink; compilarlo antes de planificar o aplicar"
+  default     = "../../flink/target/urban-sensors-flink.jar"
+}

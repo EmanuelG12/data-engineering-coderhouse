@@ -63,3 +63,20 @@ module "kinesis" {
   environment          = var.environment
   data_lake_bucket_arn = aws_s3_bucket.data_lake.arn
 }
+
+module "flink" {
+  source = "../../modules/flink"
+
+  environment           = var.environment
+  aws_region            = var.aws_region
+  kinesis_stream_arn    = module.kinesis.stream_arn
+  kinesis_kms_key_arn   = module.kinesis.stream_kms_key_arn
+  data_lake_bucket_name = aws_s3_bucket.data_lake.id
+  data_lake_bucket_arn  = aws_s3_bucket.data_lake.arn
+  application_jar_path  = var.flink_application_jar_path
+
+  depends_on = [
+    aws_s3_bucket_versioning.data_lake,
+    aws_s3_bucket_server_side_encryption_configuration.data_lake
+  ]
+}

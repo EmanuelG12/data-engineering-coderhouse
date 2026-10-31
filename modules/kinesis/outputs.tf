@@ -8,6 +8,11 @@ output "stream_arn" {
   value       = aws_kinesis_stream.ingestion.arn
 }
 
+output "stream_kms_key_arn" {
+  description = "ARN de la clave KMS utilizada para cifrar el stream"
+  value       = data.aws_kms_key.kinesis.arn
+}
+
 output "firehose_name" {
   description = "Nombre del delivery stream de Firehose"
   value       = aws_kinesis_firehose_delivery_stream.s3.name
