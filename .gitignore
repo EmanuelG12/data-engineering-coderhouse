@@ -17,3 +17,9 @@ crash.log
 .vscode/
 .idea/
 .DS_Store
+
+# Python local
+__pycache__/
+*.py[cod]
+.venv/
+venv/
