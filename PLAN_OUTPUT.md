@@ -1,4 +1,4 @@
-Nota de privacidad: los valores del ID de cuenta se reemplazaron por `[AWS_ACCOUNT_ID_REDACTED]`. Este archivo conserva una salida histórica del plan de la pre-entrega de Kinesis (23 recursos propuestos); no incluye el módulo Flink agregado después. Ese plan no se aplicó y no demuestra una entrega real de objetos a S3 ni una ejecución de Flink.
+Nota de privacidad: los valores del ID de cuenta se reemplazaron por `[AWS_ACCOUNT_ID_REDACTED]`. Este archivo conserva una salida histórica del plan de la pre-entrega de Kinesis (23 recursos propuestos); no incluye Flink ni Glue/Iceberg. Ese plan no se aplicó y no demuestra una entrega real de objetos a S3 ni una ejecución de Flink o Iceberg.
 
 Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
   + create

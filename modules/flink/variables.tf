@@ -33,6 +33,43 @@ variable "application_jar_path" {
   description = "Ruta local al JAR sombreado, relativa al directorio de trabajo de Terraform"
 }
 
+variable "glue_catalog_arn" {
+  type        = string
+  description = "ARN del catálogo de Glue"
+}
+
+variable "glue_database_arn" {
+  type        = string
+  description = "ARN de la base Glue que contiene la tabla Iceberg"
+}
+
+variable "glue_database_name" {
+  type        = string
+  description = "Nombre de la base Glue que contiene la tabla Iceberg"
+  default     = "lakehouse_db"
+}
+
+variable "iceberg_table_name" {
+  type        = string
+  description = "Nombre de la tabla del catálogo Glue escrita por el sink Iceberg de Flink"
+  default     = "urban_sensor_metrics"
+}
+
+variable "iceberg_warehouse_location" {
+  type        = string
+  description = "Ubicación raíz S3 del warehouse del catálogo Glue de Iceberg"
+}
+
+variable "iceberg_table_location" {
+  type        = string
+  description = "Ubicación S3 de la tabla Iceberg"
+}
+
+variable "iceberg_table_prefix" {
+  type        = string
+  description = "Prefijo relativo al bucket para los objetos de la tabla Iceberg"
+}
+
 variable "runtime_environment" {
   type        = string
   description = "Runtime administrado de Apache Flink compatible con el artefacto"

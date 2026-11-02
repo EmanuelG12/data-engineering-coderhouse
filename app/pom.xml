@@ -15,6 +15,7 @@
     <aws.flink.connector.version>5.0.0-1.19</aws.flink.connector.version>
     <kda.runtime.version>1.2.0</kda.runtime.version>
     <jackson.version>2.18.3</jackson.version>
+    <iceberg.version>1.7.2</iceberg.version>
   </properties>
 
   <dependencies>
@@ -45,6 +46,28 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-table-runtime</artifactId>
+      <version>${flink.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>3.3.6</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.iceberg</groupId>
+      <artifactId>iceberg-flink-runtime-1.19</artifactId>
+      <version>${iceberg.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.iceberg</groupId>
+      <artifactId>iceberg-aws-bundle</artifactId>
+      <version>${iceberg.version}</version>
     </dependency>
   </dependencies>
 

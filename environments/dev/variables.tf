@@ -31,5 +31,11 @@ variable "availability_zones" {
 variable "flink_application_jar_path" {
   type        = string
   description = "Ruta al JAR sombreado de Flink; compilarlo antes de planificar o aplicar"
-  default     = "../../flink/target/urban-sensors-flink.jar"
+  default     = "../../app/target/urban-sensors-flink.jar"
+}
+
+variable "iceberg_table_name" {
+  type        = string
+  description = "Nombre de la tabla de métricas urbanas en Glue e Iceberg"
+  default     = "urban_sensor_metrics"
 }

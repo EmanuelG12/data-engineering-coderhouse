@@ -11,6 +11,7 @@ La configuración define:
 - Un rol del plano de control con acciones explícitas de solo lectura para auditoría.
 - Un Kinesis Data Stream provisionado con dos shards y cifrado KMS, conectado a Firehose para entregar datos a `raw/kinesis/` en S3.
 - Un rol dedicado de Firehose con permisos limitados al stream, la clave KMS, el prefijo del Data Lake y sus logs de CloudWatch.
+- Una base `lakehouse_db` de Glue y una aplicación Flink que escribe agregados en una tabla Iceberg particionada por fecha bajo `warehouse/`.
 - Un backend remoto S3 cifrado y locking con DynamoDB.
 
 ## Estructura
@@ -21,11 +22,13 @@ modules/
   identity/      Roles y políticas IAM
   kinesis/       Stream cifrado, rol Firehose y entrega a S3
   flink/         Aplicación Managed Flink, rol IAM, checkpoints y logging
+infra/
+  lakehouse/     Base Glue Data Catalog declarada en Terraform
 environments/
   dev/           Configuración del entorno, backend, variables y outputs
-flink/
-  src/           Job Java de Kinesis con Event Time y agregación por ventana
-  pom.xml        Versiones de Flink y conector Kinesis
+app/
+  src/           Job Java de Kinesis, agregación por ventana y Iceberg Sink
+  pom.xml        Versiones de Flink, Kinesis e Iceberg
 ```
 
 ## Prerrequisitos
@@ -258,7 +261,7 @@ flowchart LR
     K -->|KinesisStreamsSource| F[Managed Service for Apache Flink]
     F --> W[Watermark: 30 s<br/>Event Time]
     W --> A[Ventana tumbling: 1 min<br/>keyBy sensor_id]
-    A --> L[CloudWatch Logs<br/>promedios por sensor]
+    A --> L[Iceberg Sink<br/>Glue + S3<br/>ver pre-entrega 5]
 ```
 
 ### Estado, checkpointing y límites de la práctica
@@ -267,22 +270,22 @@ flowchart LR
 - El operador de ventana mantiene estado keyed por `sensor_id`. Terraform habilita checkpoints administrados por Managed Flink cada 60 segundos, con una pausa mínima de 5 segundos.
 - En un primer inicio, la fuente usa la posición `LATEST` predeterminada del conector Kinesis: el productor debe enviar eventos después de iniciar el job. Al reiniciarse desde un checkpoint, Flink restaura el progreso y el estado.
 - **Managed Flink administra el almacenamiento de sus checkpoints.** El bloque `checkpoint_configuration` configura su persistencia y frecuencia; no recibe una ruta a un bucket S3 del usuario. El bucket del Data Lake se usa aquí para publicar el JAR, no como una ruta manual de checkpoints. Consultá la [documentación oficial de checkpoints](https://docs.aws.amazon.com/managed-flink/latest/java/how-fault.html).
-- Los resultados agregados se escriben en la salida de consola del job y se envían a CloudWatch Logs. El grupo de logs de esta aplicación conserva eventos durante 7 días.
+- En el checkpoint previo los agregados se imprimían en la salida del job. Con Iceberg, el sink persistente reemplaza esa salida: CloudWatch Logs sirve para supervisar el job y diagnosticar errores, mientras que los resultados se consultan en Glue/Athena.
 - La aplicación no se conecta a la VPC aislada de Terraform. Usa Kinesis en la misma región mediante la conectividad administrada del servicio; adjuntarla a las subredes privadas actuales requeriría diseñar rutas/endpoints para Kinesis y CloudWatch.
-- El rol de Flink es independiente del rol genérico de procesamiento: solo puede leer el stream y su clave KMS, obtener el artefacto JAR y publicar logs en el grupo de CloudWatch configurado.
+- El rol de Flink es independiente del rol genérico de procesamiento: puede leer el stream y su clave KMS, obtener el artefacto JAR, publicar logs y escribir Iceberg solo bajo el prefijo del Lakehouse.
 - La aplicación procesa registros con `sensor_id`, `temperature`, `humidity`, `air_quality_index` y `timestamp` ISO-8601. Mensajes con otro formato hacen fallar el procesamiento y quedan visibles en los logs; validá el formato de los productores antes de iniciar el job.
 - Un evento válido de ejemplo es `{"sensor_id":"sensor-001","temperature":21.5,"humidity":48.0,"air_quality_index":35,"timestamp":"2026-10-31T14:00:00Z"}`. El evento genérico usado en la prueba anterior de Kinesis no cumple este esquema.
 - **No apliques Terraform sin revisar los costos.** Managed Flink cobra por las KPU mientras la aplicación está ejecutándose; Kinesis, Firehose, S3, KMS y CloudWatch también pueden generar cargos.
 
 ### Código y empaquetado
 
-El proyecto Java está en `flink/`. Usa Java 11, Flink 1.19 y el conector Kinesis `5.0.0-1.19`, alineados con el runtime `FLINK-1_19` soportado por el provider AWS fijado en este repositorio. Para empaquetar el JAR sombreado desde la raíz:
+El proyecto Java está en `app/`. Usa Java 11, Flink 1.19 y el conector Kinesis `5.0.0-1.19`, alineados con el runtime `FLINK-1_19` configurado en Terraform. Para empaquetar el JAR sombreado desde la raíz:
 
 ```powershell
-mvn -f .\flink\pom.xml clean package
+mvn -f .\app\pom.xml clean package
 ```
 
-El resultado es `flink/target/urban-sensors-flink.jar`. Está ignorado por Git porque Terraform lo carga desde el equipo local al bucket S3. Compilá el JAR antes de ejecutar Terraform; no se versiona un artefacto binario ni se sube desde este repositorio automáticamente.
+El POM fija Iceberg `1.7.2` con los artefactos `iceberg-flink-runtime-1.19` y `iceberg-aws-bundle`. El runtime de Flink incluye la integración `GlueCatalog`; el bundle agrega los clientes AWS SDK v2 requeridos para Glue y S3. El resultado es `app/target/urban-sensors-flink.jar`. Está ignorado por Git porque Terraform lo carga desde el equipo local al bucket S3. Compilá el JAR antes de ejecutar Terraform; no se versiona un artefacto binario.
 
 ### Infraestructura y publicación
 
@@ -294,7 +297,7 @@ Después de configurar AWS SSO y confirmar la identidad de la cuenta autorizada,
 $env:AWS_PROFILE = "dev"
 aws sso login --profile dev
 aws sts get-caller-identity --profile dev
-mvn -f .\flink\pom.xml clean package
+mvn -f .\app\pom.xml clean package
 terraform -chdir=environments/dev plan
 ```
 
@@ -302,6 +305,78 @@ Revisá el plan completo. Incluirá recursos de Flink y cualquier infraestructur
 
 ### Verificación y evidencia
 
-La aplicación registra los resultados al cerrar cada ventana. Después de iniciar el job, consultá el grupo de CloudWatch devuelto por `terraform output flink_cloudwatch_log_group_name` y verificá líneas JSON con `sensor_id`, `window_start`, `window_end`, `event_count`, `avg_temperature` y `avg_air_quality_index`. En la consola de Managed Flink, verificá también el grafo del job y las métricas de checkpoints.
+Después de iniciar el job, consultá el grupo de CloudWatch devuelto por `terraform output flink_cloudwatch_log_group_name` para revisar el estado y diagnosticar errores. En la consola de Managed Flink, verificá también el grafo del job y las métricas de checkpoints. Los resultados de la agregación se validan en Iceberg/Athena, según la pre-entrega 5.
 
-La entrega todavía no tiene evidencia de una ejecución real: Docker/Kubernetes no intervienen en esta aplicación y tampoco se aplicó Terraform ni se inició Flink en AWS. Agregá capturas o logs reales después de una ejecución autorizada; no uses una salida simulada como evidencia.
+## Pre-entrega 5: persistencia transaccional con Apache Iceberg
+
+La aplicación de `app/` conserva la transformación de Flink del checkpoint anterior y cambia su salida: en lugar de imprimir agregados como JSON, escribe filas tipadas mediante `FlinkSink` a una tabla Iceberg registrada en AWS Glue Data Catalog. Terraform crea la base `lakehouse_db` y agrega al rol de Flink permisos limitados para el catálogo y el prefijo de la tabla.
+
+```mermaid
+flowchart LR
+    K[Kinesis Data Stream] --> F[Flink: parseo + event time]
+    F --> W[Watermark: 30 s]
+    W --> A[Promedios por sensor<br/>ventanas tumbling de 1 min]
+    A --> S[Iceberg Flink Sink<br/>commit en checkpoint]
+    S --> G[Glue Data Catalog<br/>lakehouse_db.urban_sensor_metrics]
+    S --> D[S3: warehouse/urban_sensor_metrics/]
+    G --> Q[Athena]
+```
+
+### Tabla, esquema y particionado
+
+La tabla `lakehouse_db.urban_sensor_metrics` almacena una fila por `sensor_id` y ventana, con `window_start`, `window_end`, `window_date`, `event_count`, `avg_temperature` y `avg_air_quality_index`. Los promedios continúan calculándose a partir del Event Time de los eventos Kinesis.
+
+La tabla se particiona por identidad sobre `window_date` (fecha UTC del inicio de la ventana). Una consulta de Athena que filtra por fecha permite *partition pruning*: Iceberg puede evitar leer archivos de otros días. No particionamos por `sensor_id` para no crear muchas particiones pequeñas si el número de sensores crece.
+
+Ejemplo de consulta:
+
+```sql
+SELECT sensor_id, window_start, avg_temperature, avg_air_quality_index
+FROM lakehouse_db.urban_sensor_metrics
+WHERE window_date = DATE '2026-11-02'
+ORDER BY sensor_id, window_start;
+```
+
+### Glue, S3 e IAM
+
+- `infra/lakehouse/` declara la base de Glue. La raíz Terraform existente sigue siendo `environments/dev/` para mantener sin cambios el backend S3 y la clave de estado del entorno.
+- El warehouse raíz es `s3://<data-lake-bucket>/warehouse/`; la tabla usa `warehouse/urban_sensor_metrics/`. El bucket ya tiene versionado y cifrado SSE-S3 configurados.
+- El rol de Flink recibe `glue:GetDatabase`, `glue:GetTable`, `glue:CreateTable` y `glue:UpdateTable` sobre el catálogo/base/tabla, además de lectura/escritura/borrado S3 limitado al prefijo de esta tabla. No se otorga acceso de escritura a `raw/` ni al resto del bucket.
+- La aplicación crea la tabla si no existe; la base de datos debe existir primero por Terraform. Para evitar conflictos de commits, ejecutá un solo job escritor sobre esta tabla. Glue usa control optimista para actualizar metadatos; Iceberg confirma los archivos al completarse los checkpoints de Flink.
+- El checkpoint administrado de Flink cada 60 segundos es el mecanismo que permite a Iceberg confirmar commits consistentes. El bucket de datos contiene el artefacto JAR y los archivos Iceberg; no se configura como ruta manual de checkpoints de Managed Flink.
+
+### Construcción, plan y evidencia
+
+Después de configurar AWS SSO y confirmar la cuenta correcta, construí el JAR y generá un plan para revisarlo:
+
+```powershell
+mvn -f .\app\pom.xml clean package
+$env:AWS_PROFILE = "dev"
+aws sso login --profile dev
+aws sts get-caller-identity --profile dev
+terraform -chdir=environments/dev plan
+```
+
+No ejecutes `apply` sin revisar el plan y los costos. La aplicación debe iniciarse desde la consola de Managed Flink después de crearla. Con el job en ejecución, enviá un evento con el esquema que espera la aplicación:
+
+```powershell
+$event = @{
+  sensor_id = "sensor-001"
+  temperature = 21.5
+  humidity = 48.0
+  air_quality_index = 35
+  timestamp = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+} | ConvertTo-Json -Compress
+$encodedEvent = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($event))
+$streamName = terraform -chdir=environments/dev output -raw kinesis_stream_name
+aws kinesis put-record --stream-name $streamName --partition-key sensor-001 --data $encodedEvent --region us-east-2 --profile dev
+```
+
+Esperá a que cierre la ventana de Event Time y se complete un checkpoint antes de verificar la tabla. En una ejecución real, verificá:
+
+1. En Glue, que aparezca `lakehouse_db` y la tabla `urban_sensor_metrics` con clasificación/formato Iceberg.
+2. En S3, que `warehouse/urban_sensor_metrics/metadata/` contenga archivos JSON de metadatos Iceberg y que haya archivos de datos.
+3. En Athena, que la consulta anterior devuelva los agregados procesados por Flink.
+4. En CloudWatch, que el job se mantenga en ejecución y no reporte fallos de escritura o conflictos de catálogo.
+
+La salida local todavía no tiene evidencias de Glue, S3 o Athena: no se aplicó Terraform ni se inició Managed Flink. Agregá capturas y resultados reales después de una ejecución autorizada; no presentes como existente una tabla que todavía no fue creada.

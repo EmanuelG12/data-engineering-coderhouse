@@ -1,6 +1,7 @@
 locals {
   application_name = "urban-sensors-${var.environment}"
   artifact_key     = "artifacts/flink/${var.environment}/urban-sensors-flink.jar"
+  glue_table_arn   = "${replace(var.glue_database_arn, ":database/", ":table/")}/${var.iceberg_table_name}"
 }
 
 data "aws_caller_identity" "current" {}
@@ -91,6 +92,58 @@ data "aws_iam_policy_document" "flink_permissions" {
   }
 
   statement {
+    sid    = "UseGlueLakehouseCatalog"
+    effect = "Allow"
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetTable",
+      "glue:CreateTable",
+      "glue:UpdateTable"
+    ]
+    resources = [
+      var.glue_catalog_arn,
+      var.glue_database_arn,
+      local.glue_table_arn
+    ]
+  }
+
+  statement {
+    sid    = "ReadWriteIcebergWarehouse"
+    effect = "Allow"
+    actions = [
+      "s3:AbortMultipartUpload",
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:ListMultipartUploadParts",
+      "s3:PutObject"
+    ]
+    resources = ["${var.data_lake_bucket_arn}/${var.iceberg_table_prefix}*"]
+  }
+
+  statement {
+    sid    = "ListIcebergWarehouse"
+    effect = "Allow"
+    actions = [
+      "s3:ListBucket",
+      "s3:ListBucketMultipartUploads"
+    ]
+    resources = [var.data_lake_bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["${var.iceberg_table_prefix}*"]
+    }
+  }
+
+  statement {
+    sid       = "GetLakehouseBucketLocation"
+    effect    = "Allow"
+    actions   = ["s3:GetBucketLocation"]
+    resources = [var.data_lake_bucket_arn]
+  }
+
+  statement {
     sid    = "WriteApplicationLogs"
     effect = "Allow"
     actions = [
@@ -144,9 +197,14 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
         property_group_id = "FlinkApplicationProperties"
 
         property_map = {
-          KINESIS_STREAM_ARN      = var.kinesis_stream_arn
-          WINDOW_MINUTES          = tostring(var.window_minutes)
-          WATERMARK_DELAY_SECONDS = tostring(var.watermark_delay_seconds)
+          AWS_REGION                 = var.aws_region
+          GLUE_DATABASE_NAME         = var.glue_database_name
+          ICEBERG_TABLE_NAME         = var.iceberg_table_name
+          ICEBERG_TABLE_LOCATION     = var.iceberg_table_location
+          ICEBERG_WAREHOUSE_LOCATION = var.iceberg_warehouse_location
+          KINESIS_STREAM_ARN         = var.kinesis_stream_arn
+          WINDOW_MINUTES             = tostring(var.window_minutes)
+          WATERMARK_DELAY_SECONDS    = tostring(var.watermark_delay_seconds)
         }
       }
     }

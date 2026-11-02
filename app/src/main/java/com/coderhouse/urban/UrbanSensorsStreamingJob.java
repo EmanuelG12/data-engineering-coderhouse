@@ -5,8 +5,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
@@ -16,6 +16,7 @@ import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.flink.connector.kinesis.source.KinesisStreamsSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -23,11 +24,64 @@ import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.table.data.GenericRowData;
+import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.StringData;
+import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
+import org.apache.flink.table.types.logical.BigIntType;
+import org.apache.flink.table.types.logical.DateType;
+import org.apache.flink.table.types.logical.DoubleType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.util.Collector;
+import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.aws.glue.GlueCatalog;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.flink.CatalogLoader;
+import org.apache.iceberg.flink.FlinkSink;
+import org.apache.iceberg.flink.TableLoader;
+import org.apache.iceberg.types.Types.NestedField;
 
 public final class UrbanSensorsStreamingJob {
     private static final String PROPERTY_GROUP = "FlinkApplicationProperties";
+    private static final String CATALOG_NAME = "glue_catalog";
+    private static final String DEFAULT_TABLE_NAME = "urban_sensor_metrics";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final RowType OUTPUT_ROW_TYPE =
+            RowType.of(
+                    new LogicalType[] {
+                        new VarCharType(VarCharType.MAX_LENGTH),
+                        new VarCharType(VarCharType.MAX_LENGTH),
+                        new VarCharType(VarCharType.MAX_LENGTH),
+                        new DateType(),
+                        new BigIntType(),
+                        new DoubleType(),
+                        new DoubleType()
+                    },
+                    new String[] {
+                        "sensor_id",
+                        "window_start",
+                        "window_end",
+                        "window_date",
+                        "event_count",
+                        "avg_temperature",
+                        "avg_air_quality_index"
+                    });
+    private static final Schema ICEBERG_SCHEMA =
+            new Schema(
+                    NestedField.required(1, "sensor_id", org.apache.iceberg.types.Types.StringType.get()),
+                    NestedField.required(2, "window_start", org.apache.iceberg.types.Types.StringType.get()),
+                    NestedField.required(3, "window_end", org.apache.iceberg.types.Types.StringType.get()),
+                    NestedField.required(4, "window_date", org.apache.iceberg.types.Types.DateType.get()),
+                    NestedField.required(5, "event_count", org.apache.iceberg.types.Types.LongType.get()),
+                    NestedField.required(6, "avg_temperature", org.apache.iceberg.types.Types.DoubleType.get()),
+                    NestedField.required(
+                            7,
+                            "avg_air_quality_index",
+                            org.apache.iceberg.types.Types.DoubleType.get()));
 
     private UrbanSensorsStreamingJob() {}
 
@@ -49,6 +103,30 @@ public final class UrbanSensorsStreamingJob {
         long windowMinutes = positiveLongProperty(parameters, "WINDOW_MINUTES", 1);
         long watermarkDelaySeconds =
                 nonNegativeLongProperty(parameters, "WATERMARK_DELAY_SECONDS", 30);
+        String glueDatabase = requiredProperty(parameters, "GLUE_DATABASE_NAME");
+        String tableLocation = requiredProperty(parameters, "ICEBERG_TABLE_LOCATION");
+        String tableName = parameters.get("ICEBERG_TABLE_NAME", DEFAULT_TABLE_NAME);
+        String warehouseLocation = requiredProperty(parameters, "ICEBERG_WAREHOUSE_LOCATION");
+        String awsRegion = requiredProperty(parameters, "AWS_REGION");
+
+        if (tableName.trim().isEmpty()) {
+            throw new IllegalArgumentException("ICEBERG_TABLE_NAME cannot be empty");
+        }
+
+        Map<String, String> catalogProperties = new HashMap<>();
+        catalogProperties.put("warehouse", warehouseLocation);
+        catalogProperties.put("io-impl", "org.apache.iceberg.aws.s3.S3FileIO");
+        catalogProperties.put("client.region", awsRegion);
+
+        TableIdentifier tableIdentifier = TableIdentifier.of(glueDatabase, tableName);
+        ensureIcebergTable(tableIdentifier, tableLocation, catalogProperties);
+        CatalogLoader catalogLoader =
+                CatalogLoader.custom(
+                        CATALOG_NAME,
+                        catalogProperties,
+                        new Configuration(),
+                        GlueCatalog.class.getName());
+        TableLoader tableLoader = TableLoader.fromCatalog(catalogLoader, tableIdentifier);
 
         KinesisStreamsSource<String> source =
                 KinesisStreamsSource.<String>builder()
@@ -86,20 +164,46 @@ public final class UrbanSensorsStreamingJob {
                         .name("assign-event-time-watermarks")
                         .uid("assign-event-time-watermarks");
 
-        DataStream<String> aggregates =
+        DataStream<RowData> aggregates =
                 readings
                         .keyBy(SensorReading::getSensorId)
                         .window(TumblingEventTimeWindows.of(Time.minutes(windowMinutes)))
                         .aggregate(new SensorAggregate(), new FormatWindowResult())
+                        .returns(InternalTypeInfo.of(OUTPUT_ROW_TYPE))
                         .name("one-minute-average-by-sensor")
                         .uid("one-minute-average-by-sensor");
 
-        aggregates
-                .print()
-                .name("cloudwatch-console-output")
-                .uid("cloudwatch-console-output");
+        FlinkSink.forRowData(aggregates)
+                .tableLoader(tableLoader)
+                .append();
 
-        environment.execute("urban-sensors-event-time-aggregation");
+        environment.execute("urban-sensors-iceberg-streaming");
+    }
+
+    private static void ensureIcebergTable(
+            TableIdentifier identifier,
+            String tableLocation,
+            Map<String, String> catalogProperties) {
+        GlueCatalog catalog = new GlueCatalog();
+        catalog.initialize(CATALOG_NAME, catalogProperties);
+        if (catalog.tableExists(identifier)) {
+            return;
+        }
+
+        try {
+            catalog.createTable(
+                    identifier,
+                    ICEBERG_SCHEMA,
+                    PartitionSpec.builderFor(ICEBERG_SCHEMA)
+                            .identity("window_date")
+                            .build(),
+                    tableLocation,
+                    Map.of("format-version", "2"));
+        } catch (AlreadyExistsException concurrentCreate) {
+            if (!catalog.tableExists(identifier)) {
+                throw concurrentCreate;
+            }
+        }
     }
 
     private static String requiredProperty(ParameterTool parameters, String name) {
@@ -131,16 +235,11 @@ public final class UrbanSensorsStreamingJob {
     public static final class SensorReading {
         @JsonProperty("sensor_id")
         private String sensorId;
-
         private Double temperature;
-
         private Double humidity;
-
         @JsonProperty("air_quality_index")
         private Integer airQualityIndex;
-
         private String timestamp;
-
         private long eventTimeMillis;
 
         public SensorReading() {}
@@ -262,13 +361,13 @@ public final class UrbanSensorsStreamingJob {
 
     public static final class FormatWindowResult
             extends ProcessWindowFunction<
-                    SensorAggregate.Accumulator, String, String, TimeWindow> {
+                    SensorAggregate.Accumulator, RowData, String, TimeWindow> {
         @Override
         public void process(
                 String sensorId,
                 Context context,
                 Iterable<SensorAggregate.Accumulator> aggregates,
-                Collector<String> output)
+                Collector<RowData> output)
                 throws Exception {
             SensorAggregate.Accumulator aggregate =
                     Objects.requireNonNull(aggregates.iterator().next());
@@ -276,20 +375,20 @@ public final class UrbanSensorsStreamingJob {
                 return;
             }
 
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("sensor_id", sensorId);
-            result.put(
-                    "window_start",
-                    Instant.ofEpochMilli(context.window().getStart()).toString());
-            result.put(
-                    "window_end",
-                    Instant.ofEpochMilli(context.window().getEnd()).toString());
-            result.put("event_count", aggregate.count);
-            result.put("avg_temperature", aggregate.temperatureSum / aggregate.count);
-            result.put(
-                    "avg_air_quality_index",
-                    (double) aggregate.airQualityIndexSum / aggregate.count);
-            output.collect(OBJECT_MAPPER.writeValueAsString(result));
+            Instant start = Instant.ofEpochMilli(context.window().getStart());
+            Instant end = Instant.ofEpochMilli(context.window().getEnd());
+            int windowDate =
+                    Math.toIntExact(start.atZone(ZoneOffset.UTC).toLocalDate().toEpochDay());
+
+            output.collect(
+                    GenericRowData.of(
+                            StringData.fromString(sensorId),
+                            StringData.fromString(start.toString()),
+                            StringData.fromString(end.toString()),
+                            windowDate,
+                            aggregate.count,
+                            aggregate.temperatureSum / aggregate.count,
+                            (double) aggregate.airQualityIndexSum / aggregate.count));
         }
     }
 }

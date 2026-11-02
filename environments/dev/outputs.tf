@@ -77,3 +77,13 @@ output "flink_cloudwatch_log_group_name" {
   description = "Grupo de CloudWatch Logs de la aplicación Flink"
   value       = module.flink.cloudwatch_log_group_name
 }
+
+output "lakehouse_database_name" {
+  description = "Nombre de la base de datos Glue del Lakehouse"
+  value       = module.lakehouse.database_name
+}
+
+output "iceberg_table_location" {
+  description = "Ubicación S3 de la tabla Iceberg"
+  value       = local.iceberg_table_location
+}
