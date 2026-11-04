@@ -105,7 +105,8 @@ Después de desplegar la infraestructura y configurar el perfil SSO `dev`, envi�
 ```powershell
 $event = '{"event":"kinesis-checkpoint","source":"aws-cli"}'
 $encodedEvent = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($event))
-aws kinesis put-record --stream-name data-ingestion-dev --partition-key test-001 --data $encodedEvent --region us-east-2 --profile dev
+$streamName = terraform -chdir=environments/dev output -raw kinesis_stream_name
+aws kinesis put-record --stream-name $streamName --partition-key test-001 --data $encodedEvent --region us-east-2 --profile dev
 ```
 
 Esperá más de 60 segundos para permitir que Firehose vacíe su buffer. Luego listá los objetos entregados; el nombre del bucket se obtiene de los outputs de Terraform:
@@ -137,7 +138,7 @@ Los outputs de red incluyen `vpc_id`, `private_subnet_ids` y `s3_endpoint_id`. L
 
 ## Evidencia del plan
 
-`PLAN_OUTPUT.md` contiene la salida del plan actual de esta configuración: 23 recursos por crear, ninguno por cambiar ni destruir. Es una propuesta de Terraform, no evidencia de que se haya aplicado. El ID de cuenta se reemplazó por un marcador en las dos apariciones de la salida antes de publicar el archivo.
+`PLAN_OUTPUT.md` conserva la salida histórica del plan generado para la pre-entrega de Kinesis (23 recursos propuestos en ese momento). No representa el plan actual de esta rama, que también contiene Flink e Iceberg, y no demuestra que los recursos se hayan aplicado ni que la prueba de entrega a S3 se haya ejecutado. El ID de cuenta se reemplazó por un marcador en la salida antes de publicar el archivo.
 
 ## Higiene del repositorio
 
