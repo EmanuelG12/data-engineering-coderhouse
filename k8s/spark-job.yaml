@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-submit
+  namespace: urban-streaming
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: spark-submit
+    spec:
+      serviceAccountName: spark
+      restartPolicy: Never
+      containers:
+        - name: spark-submit
+          image: urban-spark:3.5.5
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: app-config
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - |
+              set -eu
+              exec /opt/spark/bin/spark-submit \
+                --master k8s://https://kubernetes.default.svc:443 \
+                --deploy-mode cluster \
+                --name urban-sensors-streaming \
+                --conf spark.kubernetes.namespace=urban-streaming \
+                --conf spark.kubernetes.authenticate.driver.serviceAccountName=spark \
+                --conf spark.kubernetes.driver.podTemplateFile=/opt/spark/app/driver-pod-template.yaml \
+                --conf spark.kubernetes.container.image=urban-spark:3.5.5 \
+                --conf spark.kubernetes.container.image.pullPolicy=Never \
+                --conf spark.kubernetes.driver.request.cores=250m \
+                --conf spark.kubernetes.executor.request.cores=250m \
+                --conf spark.kubernetes.driver.limit.cores=1 \
+                --conf spark.kubernetes.executor.limit.cores=1 \
+                --conf spark.executor.instances=1 \
+                --conf spark.driver.memory=512m \
+                --conf spark.executor.memory=512m \
+                --conf spark.kubernetes.driverEnv.KAFKA_BOOTSTRAP_SERVERS="${KAFKA_BOOTSTRAP_SERVERS}" \
+                --conf spark.kubernetes.driverEnv.KAFKA_TOPIC="${KAFKA_TOPIC}" \
+                --conf spark.kubernetes.driverEnv.SPARK_CHECKPOINT_LOCATION="${SPARK_CHECKPOINT_LOCATION}" \
+                --conf spark.kubernetes.driverEnv.SPARK_LOG_LEVEL="${SPARK_LOG_LEVEL}" \
+                --conf spark.kubernetes.driver.volumes.persistentVolumeClaim.checkpoint.options.claimName=spark-checkpoint \
+                --conf spark.kubernetes.driver.volumes.persistentVolumeClaim.checkpoint.mount.path=/checkpoint \
+                --conf spark.kubernetes.driver.volumes.persistentVolumeClaim.checkpoint.mount.readOnly=false \
+                local:///opt/spark/app/job.py
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

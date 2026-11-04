@@ -4,6 +4,7 @@
 *.tfstate.*
 *.tfplan
 tfplan
+sse-config.json
 *.tfvars
 !*.tfvars.example
 
@@ -16,3 +17,12 @@ crash.log
 .vscode/
 .idea/
 .DS_Store
+
+# Python local
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Artefactos Maven
+**/target/

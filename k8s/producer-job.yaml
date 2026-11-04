@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: urban-sensor-producer
+  namespace: urban-streaming
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: urban-sensor-producer
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: producer
+          image: urban-producer:1.0
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: app-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

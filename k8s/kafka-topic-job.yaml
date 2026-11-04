@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-kafka-topic
+  namespace: urban-streaming
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: create-kafka-topic
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: create-topic
+          image: apache/kafka:3.9.1
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: app-config
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              for attempt in $(seq 1 60); do
+                if /opt/kafka/bin/kafka-topics.sh \
+                  --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
+                  --create \
+                  --if-not-exists \
+                  --topic "${KAFKA_TOPIC}" \
+                  --partitions 3 \
+                  --replication-factor 1; then
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "Kafka did not become ready; topic creation failed." >&2
+              exit 1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
